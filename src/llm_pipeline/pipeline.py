@@ -13,6 +13,9 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Project root is two levels above this file (src/llm_pipeline/pipeline.py → project root)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
 from dotenv import load_dotenv
 from loguru import logger
 
@@ -28,7 +31,7 @@ class LLMAnalysisPipeline:
     def __init__(
         self,
         openai_api_key: Optional[str] = None,
-        output_dir: str = "data/enhanced",
+        output_dir: Optional[str] = None,
         pipeline_version: str = "1.0.0",
     ):
         """
@@ -36,13 +39,18 @@ class LLMAnalysisPipeline:
 
         Args:
             openai_api_key: OpenAI API key (loads from env if not provided)
-            output_dir: Directory to save enhanced recipes
+            output_dir: Directory to save enhanced recipes. Defaults to
+                        <project_root>/data/enhanced regardless of CWD.
             pipeline_version: Version identifier for tracking
         """
-        # Load environment variables
-        load_dotenv()
+        # Load environment variables from project root .env
+        load_dotenv(dotenv_path=_PROJECT_ROOT / ".env")
 
-        self.output_dir = Path(output_dir)
+        # Resolve output dir relative to project root if not explicitly provided
+        if output_dir is None:
+            self.output_dir = _PROJECT_ROOT / "data" / "enhanced"
+        else:
+            self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
         # Initialize pipeline components
@@ -92,14 +100,20 @@ class LLMAnalysisPipeline:
         """
         Parse raw review data into Review objects.
 
+        Prefers the ``featured_tweaks`` field (curated community tweaks with
+        ``is_featured: true``) over the generic ``reviews`` list.  Falls back
+        to ``reviews`` only when no featured tweaks are present.
+
         Args:
             recipe_data: Raw recipe data containing reviews
 
         Returns:
-            List of Review objects
+            List of Review objects with ``has_modification`` set
         """
         reviews = []
-        raw_reviews = recipe_data.get("reviews", [])
+
+        # Bug 2 fix: use featured_tweaks first; fall back to reviews
+        raw_reviews = recipe_data.get("featured_tweaks") or recipe_data.get("reviews", [])
 
         for review_data in raw_reviews:
             if review_data.get("text"):
@@ -193,17 +207,18 @@ class LLMAnalysisPipeline:
             traceback.print_exc()
             return None
 
-    def process_recipe_directory(self, data_dir: str = "data") -> List[EnhancedRecipe]:
+    def process_recipe_directory(self, data_dir: Optional[str] = None) -> List[EnhancedRecipe]:
         """
         Process all recipe files in a directory.
 
         Args:
-            data_dir: Directory containing recipe JSON files
+            data_dir: Directory containing recipe JSON files. Defaults to
+                      <project_root>/data regardless of CWD.
 
         Returns:
             List of successfully processed EnhancedRecipe objects
         """
-        data_path = Path(data_dir)
+        data_path = Path(data_dir) if data_dir is not None else _PROJECT_ROOT / "data"
         recipe_files = list(data_path.glob("recipe_*.json"))
 
         logger.info(f"Found {len(recipe_files)} recipe files to process")

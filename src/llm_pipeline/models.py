@@ -77,6 +77,9 @@ class ModificationApplied(BaseModel):
     changes_made: List[ChangeRecord] = Field(
         description="Detailed list of changes made"
     )
+    confidence_score: Optional[float] = Field(
+        default=None, description="Confidence score for this modification (0-1)"
+    )
 
 
 class EnhancementSummary(BaseModel):
@@ -86,6 +89,9 @@ class EnhancementSummary(BaseModel):
     change_types: List[str] = Field(description="Types of modifications applied")
     expected_impact: str = Field(
         description="Expected improvement from these modifications"
+    )
+    confidence_score: Optional[float] = Field(
+        default=None, description="Average confidence score across all modifications (0-1)"
     )
 
 
@@ -109,11 +115,11 @@ class EnhancedRecipe(BaseModel):
     )
 
     # Optional metadata
-    description: Optional[str] = Field(description="Enhanced recipe description")
-    servings: Optional[str] = Field(description="Number of servings")
-    prep_time: Optional[str] = Field(description="Preparation time")
-    cook_time: Optional[str] = Field(description="Cooking time")
-    total_time: Optional[str] = Field(description="Total time")
+    description: Optional[str] = Field(default=None, description="Enhanced recipe description")
+    servings: Optional[str] = Field(default=None, description="Number of servings")
+    prep_time: Optional[str] = Field(default=None, description="Preparation time")
+    cook_time: Optional[str] = Field(default=None, description="Cooking time")
+    total_time: Optional[str] = Field(default=None, description="Total time")
 
     # Generation metadata
     created_at: str = Field(description="When this enhanced recipe was created")

@@ -15,6 +15,10 @@ import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
+# Resolve project root relative to this script, not the CWD
+_SCRIPT_DIR = Path(__file__).resolve().parent
+_PROJECT_ROOT = _SCRIPT_DIR.parent
+
 from llm_pipeline.pipeline import LLMAnalysisPipeline
 from loguru import logger
 
@@ -39,8 +43,8 @@ def test_single_recipe():
         logger.error(f"Failed to initialize pipeline: {e}")
         return False
 
-    # Test with chocolate chip cookie recipe
-    recipe_file = "../data/recipe_10813_best-chocolate-chip-cookies.json"
+    # Test with chocolate chip cookie recipe (path relative to project root)
+    recipe_file = str(_PROJECT_ROOT / "data" / "recipe_10813_best-chocolate-chip-cookies.json")
     if not Path(recipe_file).exists():
         logger.error(f"Recipe file not found: {recipe_file}")
         return False
@@ -90,10 +94,8 @@ def test_all_recipes():
         return False
 
     try:
-        # Process all recipes
-        enhanced_recipes = pipeline.process_recipe_directory(
-            data_dir="../data"
-        )
+        # Process all recipes (pipeline defaults to project root data dir)
+        enhanced_recipes = pipeline.process_recipe_directory()
 
         # Generate summary report
         report_path = pipeline.save_summary_report(enhanced_recipes)

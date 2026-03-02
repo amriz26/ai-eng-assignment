@@ -88,7 +88,11 @@ class RecipeModifier:
 
             if match and index is not None:
                 original_text = modified_content[index]
-                new_text = original_text.replace(edit.find, edit.replace or "")
+                # Bug 3 fix: replace the ENTIRE matched line with edit.replace.
+                # Previously this used str.replace(edit.find, edit.replace) which is
+                # an exact substring search — it silently does nothing when the fuzzy-
+                # matched line differs even slightly from edit.find.
+                new_text = edit.replace or ""
                 modified_content[index] = new_text
 
                 change_records.append(ChangeRecord(
@@ -98,7 +102,7 @@ class RecipeModifier:
                     operation="replace"
                 ))
 
-                logger.info(f"Replaced '{edit.find}' with '{edit.replace}' (similarity: {score:.2f})")
+                logger.info(f"Replaced '{original_text}' → '{new_text}' (similarity: {score:.2f})")
             else:
                 logger.warning(f"Could not find '{edit.find}' in {edit.target} (best similarity: {score:.2f})")
 

@@ -239,8 +239,10 @@ class EnhancedRecipeGenerator:
         import json
         import os
 
-        # Ensure output directory exists
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        # Ensure output directory exists (dirname may be "" if path has no dir component)
+        dir_name = os.path.dirname(output_path)
+        if dir_name:
+            os.makedirs(dir_name, exist_ok=True)
 
         # Convert to dict and save
         with open(output_path, "w", encoding="utf-8") as f:

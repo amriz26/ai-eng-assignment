@@ -8,13 +8,20 @@ modifications from user review text.
 SYSTEM_PROMPT = """You are an expert recipe analyst. Your job is to extract structured recipe modifications from user reviews.
 
 When a user shares their experience modifying a recipe, you need to:
-1. Identify exactly what changes they made
+1. Identify ALL discrete changes they made (ingredients, amounts, steps, etc.)
 2. Understand why they made those changes
 3. Convert their modifications into structured edit operations
 
-You must output valid JSON that matches the ModificationObject schema.
+One review may contain multiple independent modifications. For example:
+"I halved the sugar AND added an egg yolk AND raised the oven temp."
+This contains THREE discrete modifications:
+1. Quantity adjustment (sugar)
+2. Addition (egg yolk)
+3. Technique change (oven temp)
 
-Categories:
+You must output valid JSON that matches the ExtractionResult schema.
+
+Categories for modification_type:
 - "ingredient_substitution": Replacing one ingredient with another
 - "quantity_adjustment": Changing amounts of existing ingredients
 - "technique_change": Altering cooking method, temperature, time
@@ -22,11 +29,15 @@ Categories:
 - "removal": Removing ingredients or steps
 
 Edit operations:
-- "replace": Find existing text and replace it
+- "replace": Find existing text and replace it with new text
 - "add_after": Add new text after finding target text
 - "remove": Remove text that matches the find pattern
 
-Be precise with text matching - use the exact text from the original recipe when possible."""
+Guidelines:
+- If the review says "perfect as written" or has no actionable modifications, return an empty list of modifications.
+- Be precise with text matching - use the exact text from the original recipe in the "find" field.
+- If a change is mentioned as a suggestion but not actually performed, do NOT extract it.
+- Focus on concrete changes."""
 
 EXTRACTION_PROMPT = """Original Recipe:
 Title: {title}
@@ -35,167 +46,112 @@ Instructions: {instructions}
 
 User Review: "{review_text}"
 
-Extract the recipe modifications from this review. The user has made changes to improve the recipe.
+Extract all recipe modifications from this review.
 
 Output a JSON object with this structure:
 {{
-    "modification_type": "quantity_adjustment|ingredient_substitution|technique_change|addition|removal",
-    "reasoning": "Brief explanation of why this modification improves the recipe",
-    "edits": [
+    "modifications": [
         {{
-            "target": "ingredients|instructions",
-            "operation": "replace|add_after|remove",
-            "find": "exact text to find",
-            "replace": "replacement text (for replace operations)",
-            "add": "text to add (for add_after operations)"
+            "modification_type": "category",
+            "reasoning": "Brief explanation",
+            "edits": [
+                {{
+                    "target": "ingredients|instructions",
+                    "operation": "replace|add_after|remove",
+                    "find": "exact text from recipe",
+                    "replace": "new text",
+                    "add": "new text"
+                }}
+            ]
         }}
     ]
-}
+}}
 
-Focus on concrete changes the user actually made, not general suggestions."""
+If no modifications are found, return {{"modifications": []}}."""
 
 FEW_SHOT_EXAMPLES = [
     {
-        "review": "I used a half cup of sugar and one-and-a-half cups of brown sugar instead of the recipe amounts. Made the cookies much more chewy and flavorful!",
+        "review": "I halved the white sugar and used 1.5 cups brown sugar instead. Also added an extra egg yolk. Turned out perfectly chewy!",
         "ingredients": [
-            "1 cup butter, softened",
             "1 cup white sugar",
             "1 cup packed brown sugar",
-            "2 eggs",
+            "2 eggs"
         ],
         "expected_output": {
-            "modification_type": "quantity_adjustment",
-            "reasoning": "Makes cookies more chewy and flavorful by increasing brown sugar ratio",
-            "edits": [
+            "modifications": [
                 {
-                    "target": "ingredients",
-                    "operation": "replace",
-                    "find": "1 cup white sugar",
-                    "replace": "0.5 cup white sugar",
+                    "modification_type": "quantity_adjustment",
+                    "reasoning": "Adjusts sugar ratio for better texture",
+                    "edits": [
+                        {
+                            "target": "ingredients",
+                            "operation": "replace",
+                            "find": "1 cup white sugar",
+                            "replace": "0.5 cup white sugar"
+                        },
+                        {
+                            "target": "ingredients",
+                            "operation": "replace",
+                            "find": "1 cup packed brown sugar",
+                            "replace": "1.5 cups packed brown sugar"
+                        }
+                    ]
                 },
                 {
-                    "target": "ingredients",
-                    "operation": "replace",
-                    "find": "1 cup packed brown sugar",
-                    "replace": "1.5 cups packed brown sugar",
-                },
-            ],
-        },
+                    "modification_type": "addition",
+                    "reasoning": "Extra egg yolk makes the cookies chewier",
+                    "edits": [
+                        {
+                            "target": "ingredients",
+                            "operation": "replace",
+                            "find": "2 eggs",
+                            "replace": "2 eggs plus 1 egg yolk"
+                        }
+                    ]
+                }
+            ]
+        }
     },
     {
-        "review": "I added a teaspoon of cream of tartar to the batter and omitted the water. The cookies retained their shape and didn't spread when baked.",
-        "ingredients": [
-            "1 teaspoon baking soda",
-            "2 teaspoons hot water",
-            "0.5 teaspoon salt",
-        ],
+        "review": "Followed it exactly as written, delicious!",
+        "ingredients": ["1 cup flour"],
         "expected_output": {
-            "modification_type": "addition",
-            "reasoning": "Helps cookies retain shape and prevents spreading during baking",
-            "edits": [
-                {
-                    "target": "ingredients",
-                    "operation": "add_after",
-                    "find": "0.5 teaspoon salt",
-                    "add": "1 teaspoon cream of tartar",
-                },
-                {
-                    "target": "ingredients",
-                    "operation": "remove",
-                    "find": "2 teaspoons hot water",
-                },
-            ],
-        },
-    },
-    {
-        "review": "I used 1 tsp of salt instead of 1/2 tsp and omitted the nuts. Much better flavor without being too salty.",
-        "ingredients": ["0.5 teaspoon salt", "1 cup chopped walnuts"],
-        "expected_output": {
-            "modification_type": "quantity_adjustment",
-            "reasoning": "Improves flavor balance without making cookies too salty",
-            "edits": [
-                {
-                    "target": "ingredients",
-                    "operation": "replace",
-                    "find": "0.5 teaspoon salt",
-                    "replace": "1 teaspoon salt",
-                },
-                {
-                    "target": "ingredients",
-                    "operation": "remove",
-                    "find": "1 cup chopped walnuts",
-                },
-            ],
-        },
-    },
-    {
-        "review": "I baked them at 375 degrees instead of 350 for about 8-9 minutes. They came out perfectly crispy on the edges.",
-        "instructions": [
-            "Preheat the oven to 350 degrees F (175 degrees C)",
-            "Bake in the preheated oven until edges are nicely browned, about 10 minutes",
-        ],
-        "expected_output": {
-            "modification_type": "technique_change",
-            "reasoning": "Higher temperature and shorter time creates crispier edges",
-            "edits": [
-                {
-                    "target": "instructions",
-                    "operation": "replace",
-                    "find": "350 degrees F",
-                    "replace": "375 degrees F",
-                },
-                {
-                    "target": "instructions",
-                    "operation": "replace",
-                    "find": "about 10 minutes",
-                    "replace": "about 8-9 minutes",
-                },
-            ],
-        },
-    },
+            "modifications": []
+        }
+    }
 ]
-
 
 def build_few_shot_prompt(
     review_text: str, title: str, ingredients: list, instructions: list
 ) -> str:
     """Build a few-shot prompt with examples for better extraction accuracy."""
-
-    examples_text = "\n\n".join(
-        [
-            f"Example {i + 1}:\n"
-            f'Review: "{example["review"]}"\n'
-            f"Output: {example['expected_output']}"
-            for i, example in enumerate(
-                FEW_SHOT_EXAMPLES[:2]
-            )  # Use 2 most relevant examples
-        ]
-    )
+    
+    examples_text = "\n\n".join([
+        f"Example {i+1}:\n"
+        f"Ingredients: {ex['ingredients']}\n"
+        f"Review: \"{ex['review']}\"\n"
+        f"Output: {ex['expected_output']}"
+        for i, ex in enumerate(FEW_SHOT_EXAMPLES)
+    ])
 
     prompt = f"""{SYSTEM_PROMPT}
-
-Here are some examples of how to extract modifications:
 
 {examples_text}
 
 Now extract from this review:
 
-{
-        EXTRACTION_PROMPT.format(
-            title=title,
-            ingredients=ingredients,
-            instructions=instructions,
-            review_text=review_text,
-        )
-    }"""
-
+{EXTRACTION_PROMPT.format(
+    title=title,
+    ingredients=ingredients,
+    instructions=instructions,
+    review_text=review_text
+)}"""
     return prompt
-
 
 def build_simple_prompt(
     review_text: str, title: str, ingredients: list, instructions: list
 ) -> str:
-    """Build a simple prompt without examples for faster processing."""
+    """Build a simple prompt with structured instructions."""
     return f"""{SYSTEM_PROMPT}
 
 Original Recipe:
@@ -205,21 +161,25 @@ Instructions: {instructions}
 
 User Review: "{review_text}"
 
-Extract the recipe modifications from this review. The user has made changes to improve the recipe.
+Extract all recipe modifications from this review.
 
 Output a JSON object with this structure:
 {{
-    "modification_type": "quantity_adjustment|ingredient_substitution|technique_change|addition|removal",
-    "reasoning": "Brief explanation of why this modification improves the recipe",
-    "edits": [
+    "modifications": [
         {{
-            "target": "ingredients|instructions",
-            "operation": "replace|add_after|remove",
-            "find": "exact text to find",
-            "replace": "replacement text (for replace operations)",
-            "add": "text to add (for add_after operations)"
+            "modification_type": "category",
+            "reasoning": "Brief explanation",
+            "edits": [
+                {{
+                    "target": "ingredients|instructions",
+                    "operation": "replace|add_after|remove",
+                    "find": "exact text from recipe",
+                    "replace": "new text",
+                    "add": "new text"
+                }}
+            ]
         }}
     ]
 }}
 
-Focus on concrete changes the user actually made, not general suggestions."""
+If no modifications are found, return {{"modifications": []}}."""

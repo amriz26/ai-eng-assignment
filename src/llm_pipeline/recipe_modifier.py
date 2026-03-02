@@ -1,26 +1,20 @@
 """
-Step 2: Recipe Modification
+Step 2: Recipe Modification & Fuzzy Matching
 
-This module applies structured modifications to recipes using search-and-replace operations.
-It takes ModificationObject instances and applies their edits to recipe ingredients and instructions.
+This module applies structured modifications to recipes using fuzzy string matching
+to ensure edits are correctly mapped to original recipe text.
 """
 
-import copy
 from difflib import SequenceMatcher
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 
 from loguru import logger
 
-from .models import (
-    ModificationObject,
-    ModificationEdit,
-    Recipe,
-    ChangeRecord
-)
+from .models import ChangeRecord, ModificationEdit, ModificationObject, Recipe
 
 
 class RecipeModifier:
-    """Applies structured modifications to recipes using search-and-replace operations."""
+    """Applies structured modifications to recipes using fuzzy string matching."""
 
     def __init__(self, similarity_threshold: float = 0.6):
         """
@@ -30,233 +24,172 @@ class RecipeModifier:
             similarity_threshold: Minimum similarity score for fuzzy matching (0-1)
         """
         self.similarity_threshold = similarity_threshold
-        logger.info(f"Initialized RecipeModifier with similarity threshold: {similarity_threshold}")
-
-    def find_best_match(self, target: str, candidates: List[str]) -> Tuple[Optional[str], Optional[int], float]:
-        """
-        Find the best matching string in a list of candidates.
-
-        Args:
-            target: String to find
-            candidates: List of strings to search in
-
-        Returns:
-            Tuple of (best_match, index, similarity_score)
-        """
-        if not candidates:
-            return None, None, 0.0
-
-        best_match = None
-        best_index = None
-        best_score = 0.0
-
-        for i, candidate in enumerate(candidates):
-            similarity = SequenceMatcher(None, target.lower(), candidate.lower()).ratio()
-            if similarity > best_score:
-                best_score = similarity
-                best_match = candidate
-                best_index = i
-
-        if best_score >= self.similarity_threshold:
-            return best_match, best_index, best_score
-        else:
-            return None, None, best_score
-
-    def apply_edit(
-        self,
-        edit: ModificationEdit,
-        recipe_content: List[str]
-    ) -> Tuple[List[str], List[ChangeRecord]]:
-        """
-        Apply a single edit to a recipe content list.
-
-        Args:
-            edit: The edit operation to apply
-            recipe_content: List of ingredients or instructions
-
-        Returns:
-            Tuple of (modified_content, change_records)
-        """
-        modified_content = copy.deepcopy(recipe_content)
-        change_records = []
-
-        logger.debug(f"Applying {edit.operation} edit: find='{edit.find}'")
-
-        if edit.operation == "replace":
-            # Find and replace text
-            match, index, score = self.find_best_match(edit.find, modified_content)
-
-            if match and index is not None:
-                original_text = modified_content[index]
-                # Bug 3 fix: replace the ENTIRE matched line with edit.replace.
-                # Previously this used str.replace(edit.find, edit.replace) which is
-                # an exact substring search — it silently does nothing when the fuzzy-
-                # matched line differs even slightly from edit.find.
-                new_text = edit.replace or ""
-                modified_content[index] = new_text
-
-                change_records.append(ChangeRecord(
-                    type="ingredient" if edit.target == "ingredients" else "instruction",
-                    from_text=original_text,
-                    to_text=new_text,
-                    operation="replace"
-                ))
-
-                logger.info(f"Replaced '{original_text}' → '{new_text}' (similarity: {score:.2f})")
-            else:
-                logger.warning(f"Could not find '{edit.find}' in {edit.target} (best similarity: {score:.2f})")
-
-        elif edit.operation == "add_after":
-            # Add new content after finding target
-            match, index, score = self.find_best_match(edit.find, modified_content)
-
-            if match and index is not None and edit.add:
-                modified_content.insert(index + 1, edit.add)
-
-                change_records.append(ChangeRecord(
-                    type="ingredient" if edit.target == "ingredients" else "instruction",
-                    from_text="",
-                    to_text=edit.add,
-                    operation="add"
-                ))
-
-                logger.info(f"Added '{edit.add}' after '{edit.find}' (similarity: {score:.2f})")
-            else:
-                logger.warning(f"Could not find target '{edit.find}' for addition")
-
-        elif edit.operation == "remove":
-            # Remove matching content
-            match, index, score = self.find_best_match(edit.find, modified_content)
-
-            if match and index is not None:
-                removed_text = modified_content.pop(index)
-
-                change_records.append(ChangeRecord(
-                    type="ingredient" if edit.target == "ingredients" else "instruction",
-                    from_text=removed_text,
-                    to_text="",
-                    operation="remove"
-                ))
-
-                logger.info(f"Removed '{edit.find}' (similarity: {score:.2f})")
-            else:
-                logger.warning(f"Could not find '{edit.find}' to remove")
-
-        return modified_content, change_records
-
-    def apply_modification(
-        self,
-        recipe: Recipe,
-        modification: ModificationObject
-    ) -> Tuple[Recipe, List[ChangeRecord]]:
-        """
-        Apply a complete modification to a recipe.
-
-        Args:
-            recipe: Original recipe to modify
-            modification: Structured modification to apply
-
-        Returns:
-            Tuple of (modified_recipe, all_change_records)
-        """
-        logger.info(f"Applying {modification.modification_type} with {len(modification.edits)} edits")
-
-        # Deep copy the recipe
-        modified_recipe = Recipe(
-            recipe_id=f"{recipe.recipe_id}_modified",
-            title=recipe.title,
-            ingredients=copy.deepcopy(recipe.ingredients),
-            instructions=copy.deepcopy(recipe.instructions),
-            description=recipe.description,
-            servings=recipe.servings,
-            rating=recipe.rating
+        logger.info(
+            f"Initialized RecipeModifier with similarity threshold: {similarity_threshold}"
         )
 
-        all_change_records = []
-
-        # Apply each edit
-        for edit in modification.edits:
-            if edit.target == "ingredients":
-                modified_recipe.ingredients, change_records = self.apply_edit(
-                    edit, modified_recipe.ingredients
-                )
-            elif edit.target == "instructions":
-                modified_recipe.instructions, change_records = self.apply_edit(
-                    edit, modified_recipe.instructions
-                )
-            else:
-                logger.warning(f"Unknown edit target: {edit.target}")
-                continue
-
-            all_change_records.extend(change_records)
-
-        logger.info(f"Applied modification successfully: {len(all_change_records)} changes made")
-        return modified_recipe, all_change_records
-
     def apply_modifications_batch(
-        self,
-        recipe: Recipe,
-        modifications: List[ModificationObject]
-    ) -> Tuple[Recipe, List[List[ChangeRecord]]]:
+        self, recipe: Recipe, modifications: List[ModificationObject]
+    ) -> Tuple[Recipe, List[ChangeRecord]]:
         """
-        Apply multiple modifications to a recipe sequentially.
+        Apply a batch of modifications to a recipe.
 
         Args:
             recipe: Original recipe to modify
-            modifications: List of modifications to apply
+            modifications: List of structured modifications to apply
 
         Returns:
-            Tuple of (final_modified_recipe, list_of_change_records_per_modification)
+            Tuple of (Modified Recipe, List of ChangeRecords)
         """
-        current_recipe = recipe
+        current_recipe = recipe.model_copy(deep=True)
         all_change_records = []
 
-        logger.info(f"Applying {len(modifications)} modifications sequentially")
+        for modification in modifications:
+            logger.info(f"Applying modification: {modification.reasoning}")
+            for edit in modification.edits:
+                # Apply the edit or record a failure
+                new_recipe, records = self.apply_edit(edit, current_recipe, modification.reasoning)
+                current_recipe = new_recipe
+                all_change_records.extend(records)
 
-        for i, modification in enumerate(modifications):
-            logger.info(f"Applying modification {i + 1}/{len(modifications)}: {modification.modification_type}")
-
-            current_recipe, change_records = self.apply_modification(current_recipe, modification)
-            all_change_records.append(change_records)
-
-        logger.info(f"Applied all modifications. Final recipe has {len(current_recipe.ingredients)} ingredients and {len(current_recipe.instructions)} instructions")
         return current_recipe, all_change_records
 
-    def validate_modification_safety(
-        self,
-        modification: ModificationObject,
-        recipe: Recipe
-    ) -> Tuple[bool, List[str]]:
+    def apply_edit(
+        self, edit: ModificationEdit, recipe: Recipe, reasoning: str = ""
+    ) -> Tuple[Recipe, List[ChangeRecord]]:
         """
-        Validate that a modification won't break the recipe.
+        Apply a single atomic edit to a recipe.
 
         Args:
-            modification: Modification to validate
-            recipe: Recipe being modified
+            edit: Atomic edit operation to apply
+            recipe: Recipe to modify
+            reasoning: Why the edit is being made (for the change record)
 
         Returns:
-            Tuple of (is_safe, list_of_warnings)
+            Tuple of (Modified Recipe, List of ChangeRecords)
         """
-        warnings = []
-        is_safe = True
+        target_list = (
+            recipe.ingredients if edit.target == "ingredients" else recipe.instructions
+        )
+        new_list, change_records = self._apply_to_list(edit, target_list, reasoning)
 
-        for edit in modification.edits:
-            # Check if target content exists
-            target_content = recipe.ingredients if edit.target == "ingredients" else recipe.instructions
-            match, _, score = self.find_best_match(edit.find, target_content)
+        # Update the recipe with the modified list
+        if edit.target == "ingredients":
+            recipe.ingredients = new_list
+        else:
+            recipe.instructions = new_list
 
-            if not match:
-                warnings.append(f"Cannot find '{edit.find}' in {edit.target}")
-                is_safe = False
-            elif score < 0.8:
-                warnings.append(f"Low similarity match for '{edit.find}' (score: {score:.2f})")
+        return recipe, change_records
 
-            # Check for required fields
-            if edit.operation == "replace" and not edit.replace:
-                warnings.append(f"Replace operation missing replacement text for '{edit.find}'")
-                is_safe = False
-            elif edit.operation == "add_after" and not edit.add:
-                warnings.append(f"Add operation missing text to add after '{edit.find}'")
-                is_safe = False
+    def _apply_to_list(
+        self, edit: ModificationEdit, items: List[str], reasoning: str = ""
+    ) -> Tuple[List[str], List[ChangeRecord]]:
+        """
+        Apply an edit to a list of strings (ingredients or instructions).
+        """
+        new_items = list(items)
+        change_records = []
 
-        return is_safe, warnings
+        # Find the best match for the edit's find text
+        best_match_idx = -1
+        best_match_score = 0.0
+
+        if edit.operation != "add_after":
+             # For replace and remove, we need an exact or fuzzy match
+            for i, item in enumerate(items):
+                score = SequenceMatcher(None, edit.find.lower(), item.lower()).ratio()
+                if score > best_match_score:
+                    best_match_score = score
+                    best_match_idx = i
+
+        # Perform the operation based on the best match found
+        if edit.operation == "replace":
+            if best_match_score >= self.similarity_threshold:
+                original_text = new_items[best_match_idx]
+                new_text = edit.replace or ""
+                new_items[best_match_idx] = new_text
+                
+                logger.info(f"Replaced '{original_text}' with '{new_text}' (score: {best_match_score:.2f})")
+                change_records.append(ChangeRecord(
+                    type="ingredient" if "ingredient" in str(edit.target) else "instruction",
+                    from_text=original_text,
+                    to_text=new_text,
+                    operation="replace",
+                    matched=True,
+                    similarity_score=best_match_score,
+                    reasoning=reasoning
+                ))
+            else:
+                logger.warning(f"Could not find a good match for replace: '{edit.find}' (best score: {best_match_score:.2f})")
+                change_records.append(ChangeRecord(
+                    type="ingredient" if "ingredient" in str(edit.target) else "instruction",
+                    from_text=edit.find,
+                    to_text=edit.replace or "",
+                    operation="replace",
+                    matched=False,
+                    similarity_score=best_match_score,
+                    reasoning=reasoning
+                ))
+
+        elif edit.operation == "remove":
+            if best_match_score >= self.similarity_threshold:
+                removed_text = new_items.pop(best_match_idx)
+                logger.info(f"Removed '{removed_text}' (score: {best_match_score:.2f})")
+                change_records.append(ChangeRecord(
+                    type="ingredient" if "ingredient" in str(edit.target) else "instruction",
+                    from_text=removed_text,
+                    to_text="",
+                    operation="remove",
+                    matched=True,
+                    similarity_score=best_match_score,
+                    reasoning=reasoning
+                ))
+            else:
+                logger.warning(f"Could not find a good match for remove: '{edit.find}' (best score: {best_match_score:.2f})")
+                change_records.append(ChangeRecord(
+                    type="ingredient" if "ingredient" in str(edit.target) else "instruction",
+                    from_text=edit.find,
+                    to_text="",
+                    operation="remove",
+                    matched=False,
+                    similarity_score=best_match_score,
+                    reasoning=reasoning
+                ))
+
+        elif edit.operation == "add_after":
+            # For add_after, we also use fuzzy match to find the anchor
+            for i, item in enumerate(items):
+                score = SequenceMatcher(None, edit.find.lower(), item.lower()).ratio()
+                if score > best_match_score:
+                    best_match_score = score
+                    best_match_idx = i
+
+            if best_match_score >= self.similarity_threshold:
+                new_text = edit.add or ""
+                new_items.insert(best_match_idx + 1, new_text)
+                logger.info(f"Added '{new_text}' after '{new_items[best_match_idx]}'")
+                change_records.append(ChangeRecord(
+                    type="ingredient" if "ingredient" in str(edit.target) else "instruction",
+                    from_text=f"After: {new_items[best_match_idx]}",
+                    to_text=new_text,
+                    operation="add",
+                    matched=True,
+                    similarity_score=best_match_score,
+                    reasoning=reasoning
+                ))
+            else:
+                # Fallback: if we can't find the anchor, just append to the end
+                new_text = edit.add or ""
+                new_items.append(new_text)
+                logger.warning(f"Could not find anchor for add_after: '{edit.find}'. Appended to end.")
+                change_records.append(ChangeRecord(
+                    type="ingredient" if "ingredient" in str(edit.target) else "instruction",
+                    from_text=f"Anchor not found: {edit.find}",
+                    to_text=new_text,
+                    operation="add",
+                    matched=False,
+                    similarity_score=best_match_score,
+                    reasoning=reasoning
+                ))
+
+        return new_items, change_records

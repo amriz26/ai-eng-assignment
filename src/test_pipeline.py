@@ -95,17 +95,17 @@ def test_all_recipes():
 
     try:
         # Process all recipes (pipeline defaults to project root data dir)
-        enhanced_recipes = pipeline.process_recipe_directory()
+        pipeline.process_recipe_directory()
 
-        # Generate summary report
-        report_path = pipeline.save_summary_report(enhanced_recipes)
+        # Save summary report
+        pipeline.save_summary_report()
 
         logger.info(f"\n{'=' * 60}")
         logger.success("✓ All recipes test complete!")
-        logger.info(f"Enhanced recipes: {len(enhanced_recipes)}")
-        logger.info(f"Summary report saved to: {report_path}")
+        logger.info(f"Successful: {pipeline.processing_stats['successful_enhancements']}")
+        logger.info(f"Failed: {pipeline.processing_stats['failed_enhancements']}")
 
-        return len(enhanced_recipes) > 0
+        return pipeline.processing_stats["successful_enhancements"] > 0
 
     except Exception as e:
         logger.error(f"All recipes test failed with error: {e}")

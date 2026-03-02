@@ -1,13 +1,14 @@
 """
-Step 3: Enhanced Recipe Generation with Attribution
+Step 3: Enhanced Recipe Generation & Attribution
 
-This module generates enhanced recipes with full citation tracking.
-It combines modified recipes with attribution information to create
-comprehensive enhanced recipe objects.
+This module generates the final enhanced recipe JSON, including full attribution
+to the original reviewers and a summary of all modifications applied.
 """
 
+import json
+import os
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import List, Tuple
 
 from loguru import logger
 
@@ -24,229 +25,138 @@ from .models import (
 
 
 class EnhancedRecipeGenerator:
-    """Generates enhanced recipes with full citation tracking and attribution."""
+    """Generates the final enhanced recipe with attribution and summary informatics."""
 
-    def __init__(self, pipeline_version: str = "1.0.0"):
+    def __init__(self, version: str = "2.0.0"):
         """
-        Initialize the Enhanced Recipe Generator.
+        Initialize the EnhancedRecipeGenerator.
 
         Args:
-            pipeline_version: Version identifier for the pipeline
+            version: Pipeline version to include in output
         """
-        self.pipeline_version = pipeline_version
-        logger.info(f"Initialized EnhancedRecipeGenerator v{pipeline_version}")
-
-    def create_source_review(self, review: Review) -> SourceReview:
-        """
-        Convert a Review object to a SourceReview for attribution.
-
-        Args:
-            review: Original review object
-
-        Returns:
-            SourceReview with attribution information
-        """
-        return SourceReview(
-            text=review.text, reviewer=review.username, rating=review.rating
-        )
-
-    def create_modification_applied(
-        self,
-        modification: ModificationObject,
-        source_review: Review,
-        change_records: List[ChangeRecord],
-    ) -> ModificationApplied:
-        """
-        Create a ModificationApplied record for attribution.
-
-        Args:
-            modification: Original modification object
-            source_review: Review that suggested this modification
-            change_records: List of changes that were actually made
-
-        Returns:
-            ModificationApplied with full attribution
-        """
-        return ModificationApplied(
-            source_review=self.create_source_review(source_review),
-            modification_type=modification.modification_type,
-            reasoning=modification.reasoning,
-            changes_made=change_records,
-        )
-
-    def calculate_enhancement_summary(
-        self, modifications_applied: List[ModificationApplied]
-    ) -> EnhancementSummary:
-        """
-        Calculate summary statistics for all applied modifications.
-
-        Args:
-            modifications_applied: List of all modifications applied
-
-        Returns:
-            EnhancementSummary with aggregate statistics
-        """
-        total_changes = sum(len(mod.changes_made) for mod in modifications_applied)
-        change_types = list(set(mod.modification_type for mod in modifications_applied))
-
-        # Generate expected impact summary
-        impact_descriptions = []
-        for mod in modifications_applied:
-            if mod.reasoning:
-                impact_descriptions.append(mod.reasoning)
-
-        expected_impact = "; ".join(impact_descriptions[:3])  # Limit to top 3
-        if len(impact_descriptions) > 3:
-            expected_impact += (
-                f" (and {len(impact_descriptions) - 3} more improvements)"
-            )
-
-        return EnhancementSummary(
-            total_changes=total_changes,
-            change_types=change_types,
-            expected_impact=expected_impact
-            or "Community-validated recipe improvements",
-        )
+        self.version = version
+        logger.info(f"Initialized EnhancedRecipeGenerator v{version}")
 
     def generate_enhanced_recipe(
         self,
         original_recipe: Recipe,
         modified_recipe: Recipe,
-        modification: ModificationObject,
-        source_review: Review,
-        change_records: List[ChangeRecord],
+        all_modifications: List[Tuple[ModificationObject, Review, List[ChangeRecord]]],
     ) -> EnhancedRecipe:
         """
-        Generate a complete enhanced recipe with attribution.
+        Generate a complete EnhancedRecipe object.
 
         Args:
-            original_recipe: Original unmodified recipe
-            modified_recipe: Recipe with modifications applied
-            modification: Single modification that was applied
-            source_review: Review that suggested the modification
-            change_records: Changes made for the modification
+            original_recipe: The recipe before any changes
+            modified_recipe: The recipe after all changes applied
+            all_modifications: List of (ModificationObject, SourceReview, applied_ChangeRecords)
 
         Returns:
-            Complete EnhancedRecipe with attribution
+            Fully populated EnhancedRecipe object
         """
-        logger.info(f"Generating enhanced recipe for: {original_recipe.title}")
+        modifications_applied = []
+        all_change_types = set()
+        total_successful_changes = 0
+        total_failed_matches = 0
+        all_reasoning = []
+        
+        # Track which reviews contributed
+        contributing_reviews = set()
 
-        # Create modification applied record
-        modification_applied = self.create_modification_applied(
-            modification, source_review, change_records
+        for mod_obj, source_review_obj, changes in all_modifications:
+            contributing_reviews.add(source_review_obj.text)
+            
+            # Create the ModificationApplied record for this specific modification
+            applied = ModificationApplied(
+                source_review=SourceReview(
+                    text=source_review_obj.text,
+                    reviewer=source_review_obj.username,
+                    rating=source_review_obj.rating,
+                ),
+                modification_type=mod_obj.modification_type,
+                reasoning=mod_obj.reasoning,
+                changes_made=changes,
+                confidence_score=self._calculate_confidence(changes)
+            )
+            modifications_applied.append(applied)
+            
+            # Aggregate for the summary
+            all_change_types.add(mod_obj.modification_type)
+            all_reasoning.append(mod_obj.reasoning)
+            
+            total_successful_changes += sum(1 for c in changes if c.matched)
+            total_failed_matches += sum(1 for c in changes if not c.matched)
+
+        # Create the summary
+        summary = EnhancementSummary(
+            total_changes=total_successful_changes,
+            failed_matches=total_failed_matches,
+            change_types=list(all_change_types),
+            expected_impact="; ".join(all_reasoning),
+            confidence_score=self._calculate_avg_confidence(modifications_applied),
+            reviews_processed=len(contributing_reviews)
         )
-        modifications_applied = [modification_applied]
 
-        # Calculate enhancement summary
-        enhancement_summary = self.calculate_enhancement_summary(modifications_applied)
-
-        # Generate enhanced recipe ID and title
-        enhanced_recipe_id = f"{original_recipe.recipe_id}_enhanced"
-        enhanced_title = f"{original_recipe.title} (Community Enhanced)"
-
-        # Create the enhanced recipe
-        enhanced_recipe = EnhancedRecipe(
-            recipe_id=enhanced_recipe_id,
+        return EnhancedRecipe(
+            recipe_id=f"{original_recipe.recipe_id}_enhanced",
             original_recipe_id=original_recipe.recipe_id,
-            title=enhanced_title,
+            title=f"{original_recipe.title} (Community Enhanced)",
             ingredients=modified_recipe.ingredients,
             instructions=modified_recipe.instructions,
             modifications_applied=modifications_applied,
-            enhancement_summary=enhancement_summary,
+            enhancement_summary=summary,
             description=original_recipe.description,
             servings=original_recipe.servings,
-            prep_time=getattr(original_recipe, "prep_time", None),
-            cook_time=getattr(original_recipe, "cook_time", None),
-            total_time=getattr(original_recipe, "total_time", None),
-            created_at=datetime.now().isoformat(),
-            pipeline_version=self.pipeline_version,
+            created_at=datetime.now().isoformat(timespec="seconds"),
+            pipeline_version=self.version,
         )
 
-        logger.info(
-            f"Generated enhanced recipe with {enhancement_summary.total_changes} changes "
-            f"from {len(modifications_applied)} modifications"
-        )
+    def _calculate_confidence(self, changes: List[ChangeRecord]) -> float:
+        """Calculate confidence score for a single modification based on fuzzy match scores."""
+        if not changes:
+            return 0.0
+        
+        scores = []
+        for c in changes:
+            if c.operation == "add":
+                # Additions are considered high confidence if matched anchor
+                scores.append(1.0 if c.matched else 0.5)
+            elif c.matched:
+                scores.append(c.similarity_score or 1.0)
+            else:
+                scores.append(0.0)
+        
+        return sum(scores) / len(scores)
 
-        return enhanced_recipe
+    def _calculate_avg_confidence(self, applied: List[ModificationApplied]) -> float:
+        """Calculate average confidence across all applied modifications."""
+        if not applied:
+            return 0.0
+        scores = [a.confidence_score for a in applied if a.confidence_score is not None]
+        return sum(scores) / len(scores) if scores else 0.0
 
-    def generate_comparison_data(
-        self, original_recipe: Recipe, enhanced_recipe: EnhancedRecipe
-    ) -> Dict[str, Any]:
+    def save_enhanced_recipe(self, recipe: EnhancedRecipe, output_path: str) -> bool:
         """
-        Generate side-by-side comparison data for UI display.
+        Save the enhanced recipe to a JSON file.
 
         Args:
-            original_recipe: Original recipe
-            enhanced_recipe: Enhanced recipe
+            recipe: EnhancedRecipe to save
+            output_path: Target file path
 
         Returns:
-            Dictionary with comparison data
+            True if successful, False otherwise
         """
-        comparison = {
-            "original": {
-                "title": original_recipe.title,
-                "ingredients": original_recipe.ingredients,
-                "instructions": original_recipe.instructions,
-                "servings": original_recipe.servings,
-            },
-            "enhanced": {
-                "title": enhanced_recipe.title,
-                "ingredients": enhanced_recipe.ingredients,
-                "instructions": enhanced_recipe.instructions,
-                "servings": enhanced_recipe.servings,
-            },
-            "changes": {
-                "total_modifications": len(enhanced_recipe.modifications_applied),
-                "total_changes": enhanced_recipe.enhancement_summary.total_changes,
-                "change_types": enhanced_recipe.enhancement_summary.change_types,
-                "expected_impact": enhanced_recipe.enhancement_summary.expected_impact,
-            },
-            "citations": [
-                {
-                    "reviewer": mod.source_review.reviewer,
-                    "rating": mod.source_review.rating,
-                    "modification_type": mod.modification_type,
-                    "reasoning": mod.reasoning,
-                    "changes": [
-                        {
-                            "type": change.type,
-                            "from": change.from_text,
-                            "to": change.to_text,
-                            "operation": change.operation,
-                        }
-                        for change in mod.changes_made
-                    ],
-                }
-                for mod in enhanced_recipe.modifications_applied
-            ],
-        }
+        try:
+            # Bug 4 fix: check if directory exists before creating
+            dir_name = os.path.dirname(output_path)
+            if dir_name:
+                os.makedirs(dir_name, exist_ok=True)
 
-        return comparison
+            with open(output_path, "w") as f:
+                json.dump(recipe.model_dump(), f, indent=2)
 
-    def save_enhanced_recipe(
-        self, enhanced_recipe: EnhancedRecipe, output_path: str
-    ) -> str:
-        """
-        Save enhanced recipe to JSON file.
-
-        Args:
-            enhanced_recipe: Enhanced recipe to save
-            output_path: Path to save the file
-
-        Returns:
-            Path to the saved file
-        """
-        import json
-        import os
-
-        # Ensure output directory exists (dirname may be "" if path has no dir component)
-        dir_name = os.path.dirname(output_path)
-        if dir_name:
-            os.makedirs(dir_name, exist_ok=True)
-
-        # Convert to dict and save
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(enhanced_recipe.model_dump(), f, indent=2, ensure_ascii=False)
-
-        logger.info(f"Saved enhanced recipe to: {output_path}")
-        return output_path
+            logger.info(f"Saved enhanced recipe to: {output_path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to save enhanced recipe: {e}")
+            return False

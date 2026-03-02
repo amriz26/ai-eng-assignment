@@ -30,7 +30,12 @@ class ModificationEdit(BaseModel):
 
 
 class ModificationObject(BaseModel):
-    """Structured modification parsed from a review."""
+    """One discrete structured modification parsed from a review.
+
+    A single review may contain multiple independent modifications (e.g.
+    "I halved the sugar AND added an egg yolk AND raised the temp"). Each
+    distinct change should be its own ModificationObject.
+    """
 
     modification_type: Literal[
         "ingredient_substitution",
@@ -45,12 +50,31 @@ class ModificationObject(BaseModel):
     edits: List[ModificationEdit] = Field(description="List of atomic edits to apply")
 
 
+class ExtractionResult(BaseModel):
+    """Wrapper returned by the LLM for a single review.
+
+    Wraps a list of ModificationObjects so one review can yield multiple
+    independent modifications (e.g. sugar change + egg addition are two
+    separate modifications, not one).
+
+    If the review contains no actionable recipe changes, ``modifications``
+    must be an empty list — do NOT invent changes.
+    """
+
+    modifications: List[ModificationObject] = Field(
+        description=(
+            "All discrete modifications extracted from this review. "
+            "One item per distinct change. Empty list if no real changes found."
+        )
+    )
+
+
 class SourceReview(BaseModel):
     """Reference to the original review that suggested the modification."""
 
     text: str = Field(description="Full text of the original review")
-    reviewer: Optional[str] = Field(description="Username of the reviewer")
-    rating: Optional[int] = Field(description="Star rating given by reviewer")
+    reviewer: Optional[str] = Field(default=None, description="Username of the reviewer")
+    rating: Optional[int] = Field(default=None, description="Star rating given by reviewer")
 
 
 class ChangeRecord(BaseModel):
@@ -64,6 +88,18 @@ class ChangeRecord(BaseModel):
     operation: Literal["replace", "add", "remove"] = Field(
         description="Type of operation performed"
     )
+    # Whether the fuzzy matcher actually found a match
+    matched: bool = Field(
+        default=True,
+        description="True if the edit was successfully applied to the recipe",
+    )
+    similarity_score: Optional[float] = Field(
+        default=None,
+        description="Fuzzy similarity score of the match (0-1); None for add operations",
+    )
+    reasoning: Optional[str] = Field(
+        default=None, description="Why this specific change was made (from ModificationObject)"
+    )
 
 
 class ModificationApplied(BaseModel):
@@ -75,7 +111,7 @@ class ModificationApplied(BaseModel):
     modification_type: str = Field(description="Category of modification")
     reasoning: str = Field(description="Why this modification was applied")
     changes_made: List[ChangeRecord] = Field(
-        description="Detailed list of changes made"
+        description="Detailed list of changes made (includes unmatched edits for auditability)"
     )
     confidence_score: Optional[float] = Field(
         default=None, description="Confidence score for this modification (0-1)"
@@ -85,13 +121,21 @@ class ModificationApplied(BaseModel):
 class EnhancementSummary(BaseModel):
     """Summary of all modifications applied to a recipe."""
 
-    total_changes: int = Field(description="Total number of changes made")
+    total_changes: int = Field(description="Total number of changes successfully applied")
+    failed_matches: int = Field(
+        default=0,
+        description="Number of edits that could not be matched to recipe text",
+    )
     change_types: List[str] = Field(description="Types of modifications applied")
     expected_impact: str = Field(
         description="Expected improvement from these modifications"
     )
     confidence_score: Optional[float] = Field(
         default=None, description="Average confidence score across all modifications (0-1)"
+    )
+    reviews_processed: int = Field(
+        default=1,
+        description="Number of community reviews incorporated into this enhanced recipe",
     )
 
 
@@ -124,7 +168,7 @@ class EnhancedRecipe(BaseModel):
     # Generation metadata
     created_at: str = Field(description="When this enhanced recipe was created")
     pipeline_version: str = Field(
-        default="1.0.0", description="Version of the pipeline that created this"
+        default="2.0.0", description="Version of the pipeline that created this"
     )
 
 

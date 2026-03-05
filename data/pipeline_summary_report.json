@@ -1,0 +1,11 @@
+{
+  "timestamp": "2026-03-05T01:36:51",
+  "pipeline_version": "2.0.0",
+  "stats": {
+    "total_recipes": 6,
+    "successful": 0,
+    "failed": 6,
+    "total_modifications_applied": 0
+  },
+  "recipes": []
+}

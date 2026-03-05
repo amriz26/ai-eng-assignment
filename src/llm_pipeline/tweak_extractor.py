@@ -50,11 +50,10 @@ class TweakExtractor:
         Returns:
             List of ModificationObject if extraction successful, empty list otherwise
         """
-        if not review.has_modification:
-            logger.debug(f"Review by {review.username or 'unknown'} has no modification flag")
-            return []
-
         # Build the prompt - use few-shot for better multi-extraction reliability
+        # Note: we do NOT gate on has_modification here. The LLM is cheap and will
+        # return an empty list if there are no real modifications. Gating on a scraper
+        # flag would silently skip valid reviews from recipes where the flag was missed.
         prompt = build_few_shot_prompt(
             review.text, recipe.title, recipe.ingredients, recipe.instructions
         )
@@ -117,14 +116,10 @@ class TweakExtractor:
         Returns:
             List of top reviews sorted by rating descending
         """
-        mod_reviews = [r for r in reviews if r.has_modification]
-        if not mod_reviews:
-            return []
-
-        # Sort by rating descending. Since 'helpful_votes' isn't in schema, 
-        # rating is the next best proxy for "highest voted/quality" tweaks.
+        # Sort by rating descending. We no longer filter by has_modification
+        # because the LLM is good at ignoring non-actionable reviews.
         sorted_reviews = sorted(
-            mod_reviews, 
+            reviews, 
             key=lambda x: x.rating if x.rating is not None else 0, 
             reverse=True
         )

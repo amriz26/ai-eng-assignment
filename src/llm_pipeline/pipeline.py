@@ -135,19 +135,15 @@ class LLMAnalysisPipeline:
                 modifications = self.tweak_extractor.extract_modifications(review, current_modified_recipe)
                 
                 for mod in modifications:
-                    # Apply this modification to the current running recipe
-                    new_modified_recipe, change_records = self.recipe_modifier.apply_edit(
-                        mod.edits[0], current_modified_recipe, mod.reasoning
-                    )
-                    # If model returns multiple edits in one ModificationObject (unlikely with current schema but possible)
-                    if len(mod.edits) > 1:
-                        for edit in mod.edits[1:]:
-                             new_modified_recipe, extra_records = self.recipe_modifier.apply_edit(
-                                edit, new_modified_recipe, mod.reasoning
-                            )
-                             change_records.extend(extra_records)
+                    # Apply all edits inside this modification
+                    change_records = []
+                    for edit in mod.edits:
+                        new_modified_recipe, records = self.recipe_modifier.apply_edit(
+                            edit, current_modified_recipe, mod.reasoning
+                        )
+                        current_modified_recipe = new_modified_recipe
+                        change_records.extend(records)
                     
-                    current_modified_recipe = new_modified_recipe
                     all_applied_data.append((mod, review, change_records))
                     self.processing_stats["total_modifications_applied"] += 1
 
